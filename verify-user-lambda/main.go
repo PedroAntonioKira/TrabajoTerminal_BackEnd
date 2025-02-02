@@ -1,15 +1,14 @@
-// main.go
 package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/PedroAntonioKira/TrabajoTerminal_BackEnd/verify-user-lambda/cognito"
 	"github.com/PedroAntonioKira/TrabajoTerminal_BackEnd/verify-user-lambda/models"
-	"github.com/PedroAntonioKira/TrabajoTerminal_BackEnd/verify-user-lambda/validators"
-
 	"github.com/PedroAntonioKira/TrabajoTerminal_BackEnd/verify-user-lambda/utils"
+	"github.com/PedroAntonioKira/TrabajoTerminal_BackEnd/verify-user-lambda/validators"
 	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 )
@@ -18,36 +17,53 @@ import (
 func handler(request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
 	var reqBody models.ConfirmRequest
 
-	// Decodifica el cuerpo JSON de la solicitud en la estructura reqBody
+	// 🟢 Verificar y registrar el cuerpo de la solicitud
+	log.Println("📥 Request Body recibido:", request.Body)
+
+	// Decodificar el JSON recibido
 	err := json.Unmarshal([]byte(request.Body), &reqBody)
-	if err != nil || !validators.ValidateConfirmRequest(reqBody) {
-		utils.LogError("Invalid request")
-		return events.APIGatewayProxyResponse{
-			StatusCode: http.StatusBadRequest,
-			Body:       `{"error": "Invalid request. 'username' and 'confirmationCode' are required"}`,
-		}, nil
-	}
-
-	// Llama a la función que confirma al usuario en Cognito
-	err = cognito.ConfirmUser(reqBody)
 	if err != nil {
-		utils.LogError("Failed to confirm user", err)
+		utils.LogError("❌ Error al decodificar JSON", err)
+		errorResponse := map[string]string{"error": "Invalid request. Ensure 'username' and 'confirmationCode' are provided"}
+		body, _ := json.Marshal(errorResponse)
 		return events.APIGatewayProxyResponse{
 			StatusCode: http.StatusBadRequest,
-			Body:       `{"error": "Failed to confirm user"}`,
+			Headers: map[string]string{
+				"Content-Type":                "application/json",
+				"Access-Control-Allow-Origin": "*",
+			},
+			Body: string(body),
 		}, nil
 	}
 
-	// Respuesta exitosa en formato JSON
-	response := models.Response{Message: "User confirmed successfully"}
-	responseBody, _ := json.Marshal(response)
-	return events.APIGatewayProxyResponse{
-		StatusCode: http.StatusOK,
-		Body:       string(responseBody),
-	}, nil
+	// 🟢 Validar los campos obligatorios antes de enviar a Cognito
+	if !validators.ValidateConfirmRequest(reqBody) {
+		utils.LogError("❌ Campos requeridos faltantes en la solicitud")
+		errorResponse := map[string]string{"error": "Missing required fields: 'username' and 'confirmationCode'"}
+		body, _ := json.Marshal(errorResponse)
+		return events.APIGatewayProxyResponse{
+			StatusCode: http.StatusBadRequest,
+			Headers: map[string]string{
+				"Content-Type":                "application/json",
+				"Access-Control-Allow-Origin": "*",
+			},
+			Body: string(body),
+		}, nil
+	}
+
+	// Llamar a la función de Cognito para confirmar el usuario
+	response, err := cognito.ConfirmUser(reqBody)
+	if err != nil {
+		utils.LogError("❌ Error en confirmación de usuario", err)
+		return response, nil
+	}
+
+	// 🟢 Respuesta exitosa
+	log.Println("✅ Usuario confirmado correctamente")
+	return response, nil
 }
 
-// Punto de entrada principal de la aplicación Lambda
+// Punto de entrada de la aplicación Lambda
 func main() {
 	lambda.Start(handler)
 }
